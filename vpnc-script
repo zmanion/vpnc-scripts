@@ -1,5 +1,7 @@
 #!/bin/sh
 #
+# Modified 2017-02-08 by amanion@cert.org.
+#
 # Originally part of vpnc source code:
 # © 2005-2012 Maurice Massar, Jörg Mayer, Antonio Borneo et al.
 # © 2009-2012 David Woodhouse <dwmw2@infradead.org>
@@ -79,6 +81,7 @@ OS="`uname -s`"
 
 HOOKS_DIR=/etc/vpnc
 DEFAULT_ROUTE_FILE=/var/run/vpnc/defaultroute
+DEFAULT_ROUTE_IF_FILE=/var/run/vpnc/defaultrouteif
 RESOLV_CONF_BACKUP=/var/run/vpnc/resolv.conf-backup
 SCRIPTNAME=`basename $0`
 
@@ -349,8 +352,18 @@ else # use route command
 		# isn't -n supposed to give --numeric output?
 		# apperently not...
 		# Get rid of lines containing IPv6 addresses (':')
-		netstat -r -n | awk '/:/ { next; } /^(default|0\.0\.0\.0)/ { print $2; }'
+		# FIXME: can't use netstat -rn -f inet generically / on GNU Linux?
+		# FIXME: trouble here with >1 default routes (and 'link#N' syntax?) on Darwin / OS X
+		# FIXME: ipconfig getoption en0 router would be cleaner (on any BSD / Darwin?)
+		# FIXME: like this: ipconfig getoption `get_default_gw_if` router
+		# FIXME: or this: route get default | grep gateway | cut -d " " -f 6
+		netstat -r -n | awk '/:/ { next; } /link#/ { next; } /^(default|0\.0\.0\.0)/ { print $2; }'
+		#netstat -r -n | awk '/:/ { next; } /^(default|0\.0\.0\.0)/ { print $2; }'
 	}
+
+    get_default_gw_if() {
+        netstat -r -n | awk '/:/ { next; } /link#/ { next; } /^(default|0\.0\.0\.0)/ { print $6; }'
+    }
 
 	set_vpngateway_route() {
 		route add -host "$VPNGATEWAY" $route_syntax_gw "`get_default_gw`"
@@ -362,7 +375,9 @@ else # use route command
 
 	set_default_route() {
 		DEFAULTGW="`get_default_gw`"
+		DEFAULTGWIF="`get_default_gw_if`"
 		echo "$DEFAULTGW" > "$DEFAULT_ROUTE_FILE"
+		echo "$DEFAULTGWIF" > "$DEFAULT_ROUTE_IF_FILE"
 		route $route_syntax_del default $route_syntax_gw "$DEFAULTGW"
 		route add default $route_syntax_gw "$INTERNAL_IP4_ADDRESS" $route_syntax_interface
 	}
@@ -406,10 +421,17 @@ else # use route command
 			route $route_syntax_del default $route_syntax_gw "`get_default_gw`" $route_syntax_interface
 			route add default $route_syntax_gw `cat "$DEFAULT_ROUTE_FILE"`
 			rm -f -- "$DEFAULT_ROUTE_FILE"
+			rm -f -- "$DEFAULT_ROUTE_IF_FILE"
 		fi
 	}
 
 	del_network_route() {
+		case "$OS" in
+		Linux|NetBSD|OpenBSD|Darwin|SunOS) # and probably others...
+			# routes are deleted automatically on device shutdown
+			return
+			;;
+		esac
 		NETWORK="$1"
 		NETMASK="$2"
 		NETMASKLEN="$3"
@@ -419,6 +441,8 @@ else # use route command
 			NETGW="$INTERNAL_IP4_ADDRESS"
 		fi
 		route $route_syntax_del -net "$NETWORK" $route_syntax_netmask "$NETMASK" $route_syntax_gw "$NETGW"
+		#route $route_syntax_del -net "$NETWORK" $route_syntax_netmask "$NETMASK" $route_syntax_gw "$INTERNAL_IP4_ADDRESS"
+		
 	}
 
 	set_ipv6_default_route() {
@@ -477,6 +501,11 @@ fi
 # =========== resolv.conf handling ====================================
 
 # =========== resolv.conf handling for any OS =========================
+
+#
+# Expects /etc/resolv.conf, which OS X doesn't really care about (and might not exist).
+# Whole script could be re-written to be OS X specific, if DTLS keeps working
+#
 
 modify_resolvconf_generic() {
 	grep '^#@VPNC_GENERATED@' /etc/resolv.conf > /dev/null 2>&1 || cp -- /etc/resolv.conf "$RESOLV_CONF_BACKUP"
@@ -982,9 +1011,10 @@ do_disconnect() {
 			$IPROUTE -6 addr del $INTERNAL_IP6_NETMASK dev $TUNDEV
 		fi
 	else
-		if [ -n "$INTERNAL_IP4_ADDRESS" ]; then
-			ifconfig "$TUNDEV" 0.0.0.0
-		fi
+		#if [ -n "$INTERNAL_IP4_ADDRESS" ]; then
+		    #FIXME: In Darwin at least, utun0 doesn't exist at this point
+			#ifconfig "$TUNDEV" 0.0.0.0
+		#fi
 		if [ -n "$INTERNAL_IP6_ADDRESS" ] && [ -z "$INTERNAL_IP6_NETMASK" ]; then
 			INTERNAL_IP6_NETMASK="$INTERNAL_IP6_ADDRESS/128"
 		fi
