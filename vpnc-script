@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Modified 2017-02-08 by amanion@cert.org.
+# Modified 2018-09-05 by amanion@cert.org to work better with Mac OS X.
 #
 # Originally part of vpnc source code:
 # © 2005-2012 Maurice Massar, Jörg Mayer, Antonio Borneo et al.
@@ -119,7 +119,7 @@ else
 	ifconfig_syntax_ptpv6=""
 fi
 
-grep ^hosts /etc/nsswitch.conf|grep resolve >/dev/null 2>&1
+grep ^hosts /etc/nsswitch.conf >/dev/null 2>&1|grep resolve >/dev/null 2>&1
 if [ $? = 0 ];then
 	RESOLVEDENABLED=1
 else
